@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-```{r}
+```{r, echo = FALSE, include = FALSE}
 # install.packages("tm")
 # install.packages("SnowballC")
 # install.packages("hunspell")
@@ -31,6 +31,7 @@ library("quantmod")
 Loading Reuters News articles:
 ```{r}
 load("msftRNA2010-2012.Rdata")
+soi = "MSFT"
 
 #RNA returns some non-articles like alert headers that doesn't have a text body
 #keep the stuff that has a body
@@ -41,7 +42,7 @@ rowsWithActualText = rowsWithActualText[order(rowsWithActualText$msg_date, rowsW
 ```
 
 Creating a corpus and document term matrix:
-```{r, echo = FALSE}
+```{r, warning = FALSE}
 #creating a corpus and document term matrix ###########################################
 
 myCorpus = Corpus(VectorSource(rowsWithActualText$take_text))
@@ -72,12 +73,12 @@ tdm <- TermDocumentMatrix(myCorpus,
 
 Here is how a typical article would look like after this process:
 ```{r}
-myCorpus[[5]]$content
+myCorpus[[9]]$content
 ```
 
 Here are the tokenized words for this particular article:
 ```{r}
-get_tokens(myCorpus[[5]]$content)[hunspell_check(get_tokens(myCorpus[[5]]$content))]
+get_tokens(myCorpus[[9]]$content)[hunspell_check(get_tokens(myCorpus[[5]]$content))]
 ```
 
 
@@ -86,7 +87,7 @@ $$Sentiment(i) = \frac{1}{n(i)} \sum_{j=1}^{n(i)} sentimentScore(j)$$
 Where n(i) is the number of words in the article i that has a sentimentScore in sentiment dictionary. sentimentScore(i) is the sentiment score of the jth word.
 
 
-```{r, echo = FALSE}
+```{r, warning = FALSE}
 # calculate sentiment of corpus texts ###################################
  
 corpusSentimentSum = vector(mode = "numeric", length = length(myCorpus))
@@ -162,6 +163,37 @@ Here is the distribution of daily sentiment:
 hist(aggregatedSentiment$aggDailySentiment, breaks = 20, xlab = "daily sentiment",
      main = "distribution of daily sentiment")
 ```
+
+Collect stock returns for the days that we have sentiment scores: 
+```{r, warning = FALSE}
+# get stock prices##############################################
+
+#get the stock prices for the date range of aggregated sentiment of RNA articles
+stockPrices = getSymbols(soi, src = "yahoo", auto.assign = FALSE, from = range(aggregatedSentiment[,"date"])[1], to = range(aggregatedSentiment[,"date"])[2])
+idxStockPrices = index(stockPrices)
+stockPrices = data.frame(stockPrices)
+stockPrices$date = as.Date(idxStockPrices)
+colnames(stockPrices) = c("open", "high", "low", "close", "volume", "adjClose", "date")
+
+
+stockReturns = matrix(nrow = nrow(stockPrices) - 1, ncol = 2)
+stockReturns = data.frame(stockReturns)
+colnames(stockReturns) = c("date", "return")
+stockReturns$date = stockPrices$date[-1]
+stockReturns$return = (diff(stockPrices[,"close"]) / stockPrices[-nrow(stockPrices), "close"])*100
+
+
+#date intersection and correlation of sentiment to returns ###########################################
+
+#there may be days where no news are released, therefore there won't be a sentiment score
+#or there could be news articles released on the weekend where there won't be price data
+#find the date intersection of daily sentiment data and stock price data
+dateIntersection = as.Date(intersect(stockReturns$date, aggregatedSentiment[,"date"]))
+intersectedReturns = stockReturns[which(stockReturns$date %in% dateIntersection),]
+# colnames(intersectedStock) = c("open", "hi", "lo", "close", "volume", "date")
+intersectedAgg = aggregatedSentiment[which(aggregatedSentiment[,"date"] %in% dateIntersection),]
+```
+
 
 Here is the daily stock returns vs the daily sentiment time series:
 ```{r}
