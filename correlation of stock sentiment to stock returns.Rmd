@@ -2,7 +2,7 @@
 title: "correlation of stock sentiment and returns"
 author: "Sarp Uslu"
 date: "November 7, 2018"
-output: html_document
+output: github_document
 ---
 
 ```{r setup, include=FALSE}
