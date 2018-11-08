@@ -1,0 +1,177 @@
+---
+title: "correlation of stock sentiment and returns"
+author: "Sarp Uslu"
+date: "November 7, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+# install.packages("tm")
+# install.packages("SnowballC")
+# install.packages("hunspell")
+# install.packages("RPostgreSQL")
+# install.packages("DT")
+# install.packages("syuzhet")
+# install.packages("quantmod")
+
+library("RPostgreSQL")
+library("tm")
+library("SnowballC")
+library("hunspell")
+library("DT")
+library("syuzhet")
+library("quantmod")
+```
+
+Loading Reuters News articles:
+```{r}
+load("msftRNA2010-2012.Rdata")
+
+#RNA returns some non-articles like alert headers that doesn't have a text body
+#keep the stuff that has a body
+rowsWithActualText = rnaData[which(rnaData$take_text != ""),]
+#RNA returns texts that are out of order in terms of time. line below puts in order
+rowsWithActualText = rowsWithActualText[order(rowsWithActualText$msg_date, rowsWithActualText$msg_time),]
+
+```
+
+Creating a corpus and document term matrix:
+```{r, echo = FALSE}
+#creating a corpus and document term matrix ###########################################
+
+myCorpus = Corpus(VectorSource(rowsWithActualText$take_text))
+# convert to lower case
+myCorpus <- tm_map(myCorpus, content_transformer(tolower))# apply transformation functions (also denoted as mappings) to corpora
+# remove URLs
+removeURL <- function(x) gsub("http[^[:space:]]*", "", x)
+myCorpus <- tm_map(myCorpus, content_transformer(removeURL))
+# remove anything other than English letters or space
+removeNumPunct <- function(x) gsub("[^[:alpha:][:space:]]*", "", x)
+myCorpus <- tm_map(myCorpus, content_transformer(removeNumPunct))
+# remove punctuation
+myCorpus <- tm_map(myCorpus, removePunctuation)
+# remove numbers
+myCorpus <- tm_map(myCorpus, removeNumbers)
+# Stopwords are commonly used words in the English language such as I, me, my, etc. 
+# You can see the full list of stopwords using stopwords('english').
+# add two extra stop words: "available" and "via"
+myStopwords <- c(stopwords('english'), "available", "via")# available stopword lists are catalan, romanian, SMART
+# remove stopwords from corpus
+myCorpus <- tm_map(myCorpus, removeWords, myStopwords)
+# remove extra whitespace
+myCorpus <- tm_map(myCorpus, stripWhitespace)
+# Constructs a term-document matrix or a document-term matrix
+tdm <- TermDocumentMatrix(myCorpus,
+                          control = list(wordLengths = c(1, Inf)))
+```
+
+Here is how a typical article would look like after this process:
+```{r}
+myCorpus[[5]]$content
+```
+
+Here are the tokenized words for this particular article:
+```{r}
+get_tokens(myCorpus[[5]]$content)[hunspell_check(get_tokens(myCorpus[[5]]$content))]
+```
+
+
+Calculating sentiment for every article using a sentiment dictionary for each word:
+$$Sentiment(i) = \frac{1}{n(i)} \sum_{j=1}^{n(i)} sentimentScore(j)$$
+Where n(i) is the number of words in the article i that has a sentimentScore in sentiment dictionary. sentimentScore(i) is the sentiment score of the jth word.
+
+
+```{r, echo = FALSE}
+# calculate sentiment of corpus texts ###################################
+ 
+corpusSentimentSum = vector(mode = "numeric", length = length(myCorpus))
+corpusSentimentAvg = vector(mode = "numeric", length = length(myCorpus))
+
+#this loop goes thru all articles, tokenizes articles into words, 
+#keeps english words, get the sentiment of words and 
+#calculate the mean and sum word sentiment scores for each article
+for(i in 1:length(myCorpus)){
+  sentVectorArticle = get_sentiment(get_tokens(myCorpus[[i]]$content)[hunspell_check(get_tokens(myCorpus[[i]]$content))])
+  sentVectorArticle = sentVectorArticle[which(sentVectorArticle != 0)]
+  corpusSentimentSum[i] = sum(sentVectorArticle)
+  corpusSentimentAvg[i] = mean(sentVectorArticle)
+}
+
+#this new table holds date, time, pnac idenfifier, sum & mean sentiment scores for each article
+#pnac is a unique identifier (key) for each article
+rnaSentiment = cbind(rowsWithActualText$msg_date, as.character(rowsWithActualText$msg_time),
+                     as.character(rowsWithActualText$pnac), corpusSentimentSum, corpusSentimentAvg)
+colnames(rnaSentiment) = c("msg_date", "msg_time", "pnac", "sentimentSum", "sentimentAvg")
+rnaSentiment = data.frame(rnaSentiment)
+
+#remove duplicate pnac articles ###############################
+# updates to articles share the same pnac identifier as the main article
+# simplify stuff and only keep the first entry (main article)
+rnaSentDayAgg = NULL
+for(i in 1:nrow(rnaSentiment)){
+  currentPnac = rnaSentiment$pnac[i]
+  if(is.na(currentPnac)){
+    next()
+  }
+  rnaSentiment[which(rnaSentiment$pnac == currentPnac)[-1], ] = NA
+}
+rnaSentiment = na.omit(rnaSentiment)
+```
+
+At this point every article in the corpus has a sentiment score denoted by sentimentAvg:
+```{r}
+head(rnaSentiment)
+```
+
+
+We can also aggregate these sentiment scores daily:
+```{r}
+#daily aggregation ######################
+
+#gather unique dates available in data
+factorizedDates = levels(as.factor(rnaSentiment$msg_date))
+#distinct dates will be out of order so sort them
+sortFactorDates = sort(as.Date(factorizedDates))
+
+#for those distinct dates aggregate the sentiment daily by averaging the sentiment of articles within that day
+aggregatedSentiment = data.frame(matrix(nrow = length(factorizedDates), ncol = 2))
+aggregatedSentiment[,1] = as.Date(sortFactorDates)
+for(i in 1:nrow(aggregatedSentiment)){
+  indecesToAgg = which(as.Date(rnaSentiment$msg_date) == aggregatedSentiment[i,1])
+  aggregatedSentiment[i,2] = mean(as.numeric(as.character(rnaSentiment$sentimentAvg[indecesToAgg])))
+}
+colnames(aggregatedSentiment) = c("date", "aggDailySentiment")
+aggregatedSentiment = na.omit(aggregatedSentiment)
+dailySentTS = ts(aggregatedSentiment, freq = 252)
+```
+
+Here is the daily sentiment time series:
+```{r}
+plot(aggregatedSentiment$date, aggregatedSentiment$aggDailySentiment, type = "b", 
+    xlab = "date", ylab = "daily sentiment", main = "aggregated daily sentiment for MSFT")
+abline(h = 0, col = "blue", lty = 2)
+```
+
+Here is the distribution of daily sentiment:
+```{r}
+hist(aggregatedSentiment$aggDailySentiment, breaks = 20, xlab = "daily sentiment",
+     main = "distribution of daily sentiment")
+```
+
+Here is the daily stock returns vs the daily sentiment time series:
+```{r}
+par(mfrow=c(1,1))
+plot(intersectedReturns, type = "l", ylab = "daily stock returns", main = "comparison of daily sentiment time series to daily return time series")
+lines(intersectedAgg,  type = "l", col = "blue")
+```
+
+Correlation of daily stock returns to daily sentiment scores:
+```{r}
+cor(intersectedReturns[,"return"], intersectedAgg[,"aggDailySentiment"])
+```
+
