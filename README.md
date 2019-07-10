@@ -19,4 +19,4 @@ In this repo, I calculate the correlation of MSFT news sentiment to MSFT stock r
 The results for MSFT indicate that sentiment and returns are not correlated for MSFT or there doesn't seem to be a causation. 
 
 
-View .md file for the R markdown analysis.
+[Click here](https://github.com/sarpuslu/stock-news-sentiment/blob/master/correlation_of_stock_sentiment_to_stock_returns.md) to see R markdown analysis for MSFT data.
